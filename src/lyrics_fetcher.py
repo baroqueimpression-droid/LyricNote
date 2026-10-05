@@ -1,3 +1,4 @@
+import hashlib
 import re
 import json
 import requests
@@ -46,10 +47,13 @@ def fetch_lyrics_multistage(
         return existing_lyrics.strip(), "itunes", None
 
     assert_safe_path(CACHE_DIR)
-    safe_name = f"{artist}_{album}_{title}".replace("/", "_").replace("\\", "_").replace(":", "_")[:120]
-    cache_file = CACHE_DIR / f"{safe_name}.json"
+    raw_key = f"{artist}_{album}_{title}"
+    safe_name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', raw_key)[:80]
+    hash_suffix = hashlib.md5(raw_key.encode("utf-8", errors="replace")).hexdigest()[:8]
+    cache_file = CACHE_DIR / f"{safe_name}_{hash_suffix}.json"
 
     # キャッシュチェック
+
     if cache_file.exists():
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
