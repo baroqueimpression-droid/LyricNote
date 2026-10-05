@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments & Virtual Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & Databases
+*.log
+*.sqlite3
+*.db
+
+# Temporary & Cache files
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local data (absolute safety)
+X:/LylicData/
+LylicData/
