@@ -1,10 +1,17 @@
 import gc
 import json
+import sys
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from src.config import BASE_DATA_DIR, assert_safe_path
 from src.db import (
@@ -34,7 +41,10 @@ class BatchRunner:
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
 
     def log(self, msg: str):
-        print(f"[BatchRunner] {msg}")
+        try:
+            print(f"[BatchRunner] {msg}", flush=True)
+        except UnicodeEncodeError:
+            print(f"[BatchRunner] {msg.encode('ascii', 'backslashreplace').decode('ascii')}", flush=True)
         self.cb(msg)
 
     def run_full_pipeline(self) -> Dict[str, Any]:
@@ -321,3 +331,8 @@ WebUIを開き、プレビュー確認の上「アルバム全曲を一括書き
             "report_path": str(report_file),
             "report_text": report_text
         }
+
+if __name__ == "__main__":
+    runner = BatchRunner()
+    runner.run_full_pipeline()
+
