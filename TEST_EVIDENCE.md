@@ -221,4 +221,85 @@
   3. 自己修復された3曲のうち洋楽2曲（The Tangent, The King's Singers）についても直後に追加翻訳が完了し、最終的に5,185曲が `ready_to_write` となり、未処理曲は0件となった。
   4. バッチ実行中のiTunes COM直接書き込みは0件であり、Chapter 0の安全規約が物理的・論理的に完全に担保されていることを実証した。
 
+---
 
+### 【検証6】 セカンダリ外部ソースクライアント＆多段階統合取得検証 (タスク13)
+- **検証日時**: 2026-10-07 00:19:10 JST
+- **対象モジュール・機能**: `src/secondary_sources.py` (Genius, J-Lyric.net, Lyrics.ovh, 多段階パイプライン `fetch_secondary_lyrics_multistage`, キャッシュ機能, Politeness Policy)
+- **テストの目的・シナリオ**: 
+  LRCLIB未登録の未検出曲（洋楽約1,800曲、邦楽約1,400曲）を救済するためのセカンダリ外部ソースクライアントが正しく動作することを検証する。
+  1. Genius から洋楽ボーカル曲（Asia - Heat of the Moment）の歌詞が正しく抽出されること。
+  2. Genius から洋楽インスト曲（The Flower Kings - Babylon）が `is_instrumental=True` として正確に自動判定されること。
+  3. J-Lyric.net から邦楽ボーカル曲（THE ALFEE - 星空のディスタンス）の歌詞がUTF-8で正しく取得され、Politeness Policy（最低1.5秒待機）が遵守されること。
+  4. Lyrics.ovh からパブリックAPI経由で洋楽歌詞（Coldplay - Yellow）が取得されること。
+  5. 多段階統合パイプライン（邦楽・洋楽ルーティング）および `X:\LylicData\secondary_cache\` へのローカルキャッシュ保存・即時再利用が機能すること。
+- **実行コマンド / テストコード**:
+  ```powershell
+  $env:PYTHONIOENCODING="utf-8"; python verify_secondary_sources.py
+  ```
+- **テスト結果 (Pass / Fail)**: **Pass (全検証項目 100% 合格)**
+- **実行出力生ログ（ターミナル出力抜粋）**:
+  ```text
+  ============================================================
+  Task 13: セカンダリ外部ソース クライアント 動作検証
+  ============================================================
+
+  --- [1] Genius: Asia - Heat of the Moment ---
+  Result: lyrics_len=1249, is_inst=False, err=None, elapsed=0.22s
+  Lyrics Preview:
+  [Verse 1]
+  I never meant to be so bad to you
+  One thing I said that I would never do
+  A look from you, and I would fall fro...
+
+
+  --- [2] Genius (Instrumental): The Flower Kings - Babylon ---
+  Result: lyrics_len=0, is_inst=True, err=None, elapsed=0.20s
+  Instrumental detection PASS!
+
+  --- [3] J-Lyric.net: THE ALFEE - 星空のディスタンス ---
+  Result: lyrics_len=335, is_inst=False, err=None, elapsed=1.64s
+  Lyrics Preview:
+  激しい風が今心に舞う
+  「サヨナラ」はただ一度の過ちなのか
+
+  たとえ500マイル離れても
+  夜が来てまた心は求め合うのさ
+  星空の下のディスタンス
+  燃え上がれ!愛のレジスタンス
+  さえぎる夜を乗り越えて
+  この胸にもう一度
+  Baby Come Bac...
+
+
+  --- [4] Lyrics.ovh: Coldplay - Yellow ---
+  Result: lyrics_len=933, is_inst=False, err=None, elapsed=1.08s
+  Lyrics Preview:
+  Look at the stars
+  look how they shine for you
+  and everything you do
+  yeah they were all yellow
+  I came along
+  I wrote a son...
+
+
+  --- [5] 多段階統合パイプライン (邦楽 & 洋楽 & キャッシュ) ---
+  Multistage JA (cached): src=jlyric, is_inst=False, len=335, elapsed=0.0100s
+  Multistage EN (cached): src=genius, is_inst=False, len=1249, elapsed=0.0114s
+  Multistage EN Inst (cached): src=genius, is_inst=True, elapsed=0.0071s
+
+  Cache Directory Files count: 4
+    - genius_Asia_Heat of the Moment_ff639fed1aa4cf88.json
+    - genius_The Flower Kings_Babylon_1f339f6728bf348f.json
+    - jlyric_THE ALFEE_星空のディスタンス_26842a5900c3cacd.json
+    - lyrics_ovh_Coldplay_Yellow_63fed8104b5fe117.json
+
+  ============================================================
+  ALL VERIFICATION CHECKS PASSED SUCCESSFULLY (100%)
+  ============================================================
+  ```
+- **結論・考察**:
+  1. **外部ソース3系統の成立確認**: Genius（洋楽・インスト判定）、J-Lyric.net（邦楽）、Lyrics.ovh（パブリックAPI）の全クライアントが想定通りのデータ取得に成功した。
+  2. **インスト判定伝播の確立**: Geniusが返す `This song is an instrumental` を正確に捉え、`is_instrumental=True` を返すことを確認。これにより次タスク（タスク12: `src/instrumental_detector.py`）で外部インスト判定をシームレスに統合できる基盤が整った。
+  3. **負荷防止とキャッシング**: J-Lyric.net では 1.64秒のPoliteness待機が自動挿入され、過度な負荷を防止している。また、一度取得したデータは `X:\LylicData\secondary_cache/` にハッシュキー付きでキャッシュされ、多段階パイプラインからの2回目以降のリクエストは 0.01秒以内で即返却されることを確認した。
+  4. **下位互換性**: 既存の全テストスイート（`python -m unittest discover tests`、11件）を実行し、全テストPass・リグレッションゼロを確認した。

@@ -10,12 +10,14 @@ BASE_DATA_DIR = Path("X:/LylicData").resolve()
 DB_PATH = BASE_DATA_DIR / "library.db"
 BACKUP_DIR = BASE_DATA_DIR / "lyrics_backup"
 CACHE_DIR = BASE_DATA_DIR / "lrclib_cache"
+SECONDARY_CACHE_DIR = BASE_DATA_DIR / "secondary_cache"
 
 def ensure_data_directories() -> None:
     """Xドライブの専用ディレクトリが存在することを確認・作成する"""
     BASE_DATA_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    SECONDARY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 def assert_safe_path(target_path: Path | str) -> Path:
     """
