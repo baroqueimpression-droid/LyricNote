@@ -32,7 +32,10 @@ _last_jlyric_request_time: float = 0.0
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
-REQUEST_TIMEOUT = 12  # 秒
+# Context7 推奨パターン: (connect_timeout, read_timeout) タプル指定
+# TCP再送ウィンドウを考慮し connect は 3.05 秒に設定してフェイルファスト化
+DEFAULT_TIMEOUT = (3.05, 10.0)
+LYRICS_OVH_TIMEOUT = (3.05, 5.0)  # 外部無料API用フェイルファストタイムアウト
 
 
 def _wait_jlyric_politeness() -> None:
@@ -152,7 +155,7 @@ def fetch_genius_lyrics(
     # 1. 検索リクエスト (最大2回リトライ)
     for attempt in range(2):
         try:
-            res = requests.get(search_url, params={"q": query}, headers=headers, timeout=REQUEST_TIMEOUT)
+            res = requests.get(search_url, params={"q": query}, headers=headers, timeout=DEFAULT_TIMEOUT)
             if res.status_code == 200:
                 data = res.json()
                 sections = data.get("response", {}).get("sections", [])
@@ -209,7 +212,7 @@ def fetch_genius_lyrics(
     # 2. 楽曲ページの取得とパース
     for attempt in range(2):
         try:
-            page_res = requests.get(song_url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+            page_res = requests.get(song_url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             if page_res.status_code != 200:
                 if attempt == 1:
                     _save_to_cache("genius", artist, title, None, False, f"page_http_{page_res.status_code}")
@@ -297,7 +300,7 @@ def fetch_jlyric_lyrics(
     for attempt in range(2):
         try:
             _wait_jlyric_politeness()
-            res = requests.get(search_url, params=params, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+            res = requests.get(search_url, params=params, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             res.encoding = res.apparent_encoding or "utf-8"
 
             if res.status_code == 200:
@@ -356,7 +359,7 @@ def fetch_jlyric_lyrics(
     for attempt in range(2):
         try:
             _wait_jlyric_politeness()
-            detail_res = requests.get(detail_url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+            detail_res = requests.get(detail_url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             detail_res.encoding = detail_res.apparent_encoding or "utf-8"
 
             if detail_res.status_code == 200:
@@ -405,33 +408,36 @@ def fetch_lyrics_ovh(
 
     url = f"https://api.lyrics.ovh/v1/{artist.strip()}/{title.strip()}"
 
-    for attempt in range(2):
-        try:
-            res = requests.get(url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
-            if res.status_code == 200:
-                data = res.json()
-                raw_lyrics = data.get("lyrics", "").strip()
-                if raw_lyrics:
-                    # ヘッダー表記（Paroles de la chanson ... など）のクリーンアップ
-                    cleaned = re.sub(r"^Paroles de la chanson[^\n]*\n+", "", raw_lyrics, flags=re.IGNORECASE)
-                    cleaned = cleaned.strip()
-                    _save_to_cache("lyrics_ovh", artist, title, cleaned, False, None)
-                    return (cleaned, False, None)
-                else:
-                    _save_to_cache("lyrics_ovh", artist, title, None, False, "empty_lyrics")
-                    return (None, False, "empty_lyrics")
-            elif res.status_code == 404:
-                _save_to_cache("lyrics_ovh", artist, title, None, False, "not_found")
-                return (None, False, "not_found")
+    try:
+        res = requests.get(url, headers=DEFAULT_HEADERS, timeout=LYRICS_OVH_TIMEOUT)
+        if res.status_code == 200:
+            data = res.json()
+            raw_lyrics = data.get("lyrics", "").strip()
+            if raw_lyrics:
+                # ヘッダー表記（Paroles de la chanson ... など）のクリーンアップ
+                cleaned = re.sub(r"^Paroles de la chanson[^\n]*\n+", "", raw_lyrics, flags=re.IGNORECASE)
+                cleaned = cleaned.strip()
+                _save_to_cache("lyrics_ovh", artist, title, cleaned, False, None)
+                return (cleaned, False, None)
             else:
-                if attempt == 1:
-                    _save_to_cache("lyrics_ovh", artist, title, None, False, f"http_{res.status_code}")
-                    return (None, False, f"http_{res.status_code}")
-                time.sleep(1.0)
-        except Exception as e:
-            if attempt == 1:
-                return (None, False, f"network_error: {e}")
-            time.sleep(1.0)
+                _save_to_cache("lyrics_ovh", artist, title, None, False, "empty_lyrics")
+                return (None, False, "empty_lyrics")
+        elif res.status_code == 404:
+            _save_to_cache("lyrics_ovh", artist, title, None, False, "not_found")
+            return (None, False, "not_found")
+        else:
+            return (None, False, f"http_{res.status_code}")
+    except requests.exceptions.ConnectTimeout:
+        logger.warning(f"Lyrics.ovh connect timed out for {artist} - {title} (fail-fast)")
+        return (None, False, "connect_timeout")
+    except requests.exceptions.ReadTimeout:
+        logger.warning(f"Lyrics.ovh read timed out for {artist} - {title}")
+        return (None, False, "read_timeout")
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Lyrics.ovh request failed for {artist} - {title}: {type(e).__name__}")
+        return (None, False, f"network_error: {type(e).__name__}")
+    except Exception as e:
+        return (None, False, f"error: {e}")
 
     return (None, False, "unknown_error")
 

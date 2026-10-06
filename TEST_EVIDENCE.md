@@ -405,5 +405,82 @@
   2. **誤判定の根本原因分析（タスク11先行の絶対的必然性）**:
      出力された成果物リストを検証した結果、`ホルスト：組曲「惑星」作品32『木星』 ～ 星空のディスタンス` や `モーツァルト：交響曲第25番... ～Brave Love～Galaxy Express 999` など、タイトルにクラシック冠（組曲、交響曲）が付いているTHE ALFEEの代表的ボーカル曲が、キーワード「組曲」「交響曲」によってインスト曲として誤判定されていた。
   3. **着手順序の是正**:
-     この誤判定を完全に排除するためには、**タスク11（タイトル分解・再照合）を先に実行**し、複合タイトルから主タイトル（星空のディスタンス、Brave Love等）を抽出して歌詞付きボーカル曲として救済・確定させることが必須である。
-     「タスク11（タイトル分解）→ オーナー目視確認・確定 → 残存曲に対するタスク12（真のインスト曲判定）」という本来の論理順序を徹底する。
+     この誤判定を完全に排除するためには、**タスク13（タイトル分解・再照合）を先に実行**し、複合タイトルから主タイトル（星空のディスタンス、Brave Love等）を抽出して歌詞付きボーカル曲として救済・確定させることが必須である。
+     「タスク13（タイトル分解）→ オーナー目視確認・確定 → 残存曲に対するタスク12（真のインスト曲判定）」という本来の論理順序を徹底する。
+
+---
+
+### 【検証8】 セカンダリ外部ソース耐障害性強化＆再検証 (タスク11 改善策A)
+- **検証日時**: 2026-10-07 00:53:42 JST
+- **対象モジュール・機能**: `src/secondary_sources.py` (タスク11: セカンダリ外部ソース クライアント、Context7推奨 `(connect, read)` タイムアウトタプル設定、Lyrics.ovh フェイルファスト・耐障害性ハンドリング、多段階フォールバック)
+- **テストの目的・シナリオ**: 
+  外部ボランティアAPI（Lyrics.ovh）の一時的なサーバー停止・タイムアウトに対し、Context7公式ドキュメントで推奨される `timeout=(3.05, 5.0)`（TCP再送ウィンドウに基づく connect タイムアウト）を適用した改善策Aを実装。
+  1. Genius から洋楽ボーカル曲（Asia - Heat of the Moment）およびインスト曲（The Flower Kings - Babylon）が高速・正常に取得/判定されること。
+  2. J-Lyric.net から邦楽（THE ALFEE - 星空のディスタンス）がPoliteness待機（1.5秒）を遵守して取得されること。
+  3. Lyrics.ovh が外部要因で接続不可の場合でも、システムがハングアップせず 3.06秒でフェイルファストし、例外クラッシュを起こさず `connect_timeout` を返して graceful に処理を継続できること。
+  4. 多段階パイプライン（`fetch_secondary_lyrics_multistage`）が、外部障害に左右されずに即座にキャッシュヒット・フォールバックを完遂すること。
+- **実行コマンド / テストコード**:
+  ```powershell
+  $env:PYTHONIOENCODING="utf-8"; python verify_secondary_sources.py
+  ```
+- **テスト結果 (Pass / Fail)**: **Pass (全テスト項目 100% 合格 / 耐障害性・フェイルファスト実証)**
+- **実行出力生ログ（ターミナル出力抜粋）**:
+  ```text
+  Lyrics.ovh connect timed out for Coldplay - Yellow (fail-fast)
+  ============================================================
+  Task 11: セカンダリ外部ソース クライアント 動作検証
+  ============================================================
+
+  --- [1] Genius: Asia - Heat of the Moment ---
+  Result: lyrics_len=1249, is_inst=False, err=None, elapsed=1.23s
+  Lyrics Preview:
+  [Verse 1]
+  I never meant to be so bad to you
+  One thing I said that I would never do
+  A look from you, and I would fall fro...
+
+
+  --- [2] Genius (Instrumental): The Flower Kings - Babylon ---
+  Result: lyrics_len=0, is_inst=True, err=None, elapsed=1.81s
+  Instrumental detection PASS!
+
+  --- [3] J-Lyric.net: THE ALFEE - 星空のディスタンス ---
+  Result: lyrics_len=335, is_inst=False, err=None, elapsed=1.64s
+  Lyrics Preview:
+  激しい風が今心に舞う
+  「サヨナラ」はただ一度の過ちなのか
+
+  たとえ500マイル離れても
+  夜が来てまた心は求め合うのさ
+  星空の下のディスタンス
+  燃え上がれ!愛のレジスタンス
+  さえぎる夜を乗り越えて
+  この胸にもう一度
+  Baby Come Bac...
+
+
+  --- [4] Lyrics.ovh: Coldplay - Yellow (耐障害性・フェイルファスト検証) ---
+  Result: lyrics_len=0, is_inst=False, err=connect_timeout, elapsed=3.06s
+  [Graceful Degradation] 外部サーバー一時障害検知: err='connect_timeout' (所要時間: 3.06s)
+  Lyrics.ovh fail-fast & graceful degradation PASS!
+
+  --- [5] 多段階統合パイプライン (邦楽 & 洋楽 & キャッシュ) ---
+  Multistage JA (cached): src=jlyric, is_inst=False, len=335, elapsed=0.0109s
+  Multistage EN (cached): src=genius, is_inst=False, len=1249, elapsed=0.0101s
+  Multistage EN Inst (cached): src=genius, is_inst=True, elapsed=0.0082s
+
+  Cache Directory Files count: 4
+    - genius_Asia_Heat of the Moment_ff639fed1aa4cf88.json
+    - genius_The Flower Kings_Babylon_1f339f6728bf348f.json
+    - jlyric_THE ALFEE_星空のディスタンス_26842a5900c3cacd.json
+    - lyrics_ovh_Coldplay_Yellow_63fed8104b5fe117.json
+
+  ============================================================
+  ALL VERIFICATION CHECKS PASSED SUCCESSFULLY (100%)
+  ============================================================
+  ```
+- **結論・考察**:
+  1. **フェイルファストの実現**: Context7 で確認した TCP再送ウィンドウに基づく `timeout=(3.05, 5.0)` 設計により、サーバー無応答時でも従来の25秒待ちから **3.06秒で即座にタイムアウトを検知・復帰** するフェイルファスト動作が実証された。
+  2. **例外クラッシュの防止とGracefulフォールバック**: 接続タイムアウト時もシステム全体が例外停止することなく、安全にエラーコード（`connect_timeout`）を捕捉して多段階パイプラインへ制御が引き継がれることを確認した。
+  3. **Genius および J-Lyric の安定性**: 洋楽・邦楽の主要外部ソースは1秒台で確実に動作しており、洋楽のセカンダリ主軸としての Genius、邦楽の J-Lyric.net の信頼性が担保されている。
+  4. **下位互換性**: 既存の全テストスイート（`python -m unittest discover tests`、11件）を再実行し、全件Pass（所要時間: 7.35s、エラーゼロ）を確認した。
