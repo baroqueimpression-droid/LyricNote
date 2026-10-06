@@ -484,3 +484,66 @@
   2. **例外クラッシュの防止とGracefulフォールバック**: 接続タイムアウト時もシステム全体が例外停止することなく、安全にエラーコード（`connect_timeout`）を捕捉して多段階パイプラインへ制御が引き継がれることを確認した。
   3. **Genius および J-Lyric の安定性**: 洋楽・邦楽の主要外部ソースは1秒台で確実に動作しており、洋楽のセカンダリ主軸としての Genius、邦楽の J-Lyric.net の信頼性が担保されている。
   4. **下位互換性**: 既存の全テストスイート（`python -m unittest discover tests`、11件）を再実行し、全件Pass（所要時間: 7.35s、エラーゼロ）を確認した。
+
+---
+
+### 【検証9】 セカンダリ外部ソース 未検出曲一括再スキャン本番実行検証 (タスク11)
+- **検証日時**: 2026-10-07 01:07:17 JST ～ 2026-10-07 03:25:01 JST (所要時間: 137.7分 / 2時間17分44秒)
+- **対象モジュール・機能**: `src/secondary_scanner.py`, `src/secondary_sources.py` (タスク11: セカンダリ外部ソース一括再スキャンバッチ、J-Lyric.net, Genius, Lyrics.ovh, チェックポイント制御, 成果物レポート生成)
+- **テストの目的・シナリオ**: 
+  本番ライブラリで `lyrics_not_found` となっていた全 3,282 曲を対象に、セカンダリ外部ソースによる一括再スキャンを無停止で実行する。
+  50曲ごとのチェックポイントコミットおよび `X:\LylicData\secondary_cache/` へのキャッシングを遵守し、iTunes COM への直接書き込みゼロを担保しながら、邦楽旧譜・洋楽プログレの歌詞救済とGeniusインスト判定を実行し、成果物レポートを出力できることを実証する。
+- **実行コマンド / テストコード**:
+  ```powershell
+  $env:PYTHONIOENCODING="utf-8"; python -m src.secondary_scanner
+  ```
+- **テスト結果 (Pass / Fail)**: **Pass (全3,282曲 無停止完走 / エラーゼロ / 1,029曲 救済・同定成功)**
+- **実行出力生ログ（ターミナル出力抜粋）**:
+  ```text
+  [01:07:17] [INFO] === セカンダリ外部ソース再スキャン開始 [RunID: 20261007_010717] ===
+  [01:07:17] [INFO] 対象トラック数: 3282 曲
+  [01:07:21] [WARNING] Lyrics.ovh connect timed out for "Little" Jimmy Dickens - Blackeyed Joe's (fail-fast)
+  ...
+  [01:15:32] [INFO] [180/3282] [救済成功 (genius)] Barock Project - Broken (1450文字) -> unprocessed
+  [01:15:40] [INFO] [185/3282] [インスト検出 (genius)] Barock Project - Driving Rain -> instrumental
+  ...
+  [02:18:45] [INFO] [1520/3282] [救済成功 (jlyric)] THE ALFEE - 恋人達のペイヴメント (410文字) -> ready_to_write
+  [02:18:48] [INFO] [1521/3282] [救済成功 (jlyric)] THE ALFEE - 星空のディスタンス (335文字) -> ready_to_write
+  ...
+  [03:22:13] [INFO] [3164/3282] [救済成功 (jlyric)] 高橋真梨子 - 襟裳岬 (341文字) -> ready_to_write
+  [03:24:08] [INFO] [3234/3282] [救済成功 (jlyric)] 高見沢俊彦 - 千年ロマンス (528文字) -> ready_to_write
+  [03:25:01] [INFO] [3282/3282] [救済成功 (jlyric)] 鬼束ちひろ - 夏休み (191文字) -> ready_to_write
+  [03:25:01] [INFO] === セカンダリ再スキャン完了 ===
+  [03:25:01] [INFO] 総処理数: 3282 曲 (所要時間: 137.7 分)
+  [03:25:01] [INFO] 救済数: 859 曲, インスト判定数: 170 曲, 残留未検出: 2253 曲
+  [03:25:01] [INFO] Markdown レポート生成: X:\LylicData\reports\secondary_scan_20261007_010717.md
+  [03:25:01] [INFO] CSV レポート生成:      X:\LylicData\reports\secondary_scan_20261007_010717.csv
+  ```
+  **生成完了公式レポート生抜粋 (`X:\LylicDataeports\secondary_scan_20261007_010717.md`)**:
+  ```markdown
+  # セカンダリ外部ソース再スキャン 完了レポート (タスク11)
+
+  - **実行ID**: `20261007_010717`
+  - **実行日時**: `2026-10-07 03:25:01`
+  - **スキャン総曲数**: 3282 曲
+  - **所要時間**: 137.7 分 (8264 秒)
+
+  ### 【サマリー】
+  - **歌詞救済数**: **859 曲** (J-Lyric.net / Genius / Lyrics.ovh)
+  - **インスト検出数**: **170 曲** (Genius属性)
+  - **残留未検出数**: **2253 曲**
+  ```
+  **実行後 DBステータス内訳生確認ログ**:
+  ```text
+  === Current Tracks Status Breakdown ===
+    completed: 18
+    instrumental: 170
+    lyrics_not_found: 2253
+    ready_to_write: 5651
+    unprocessed: 394
+  ```
+- **結論・考察**:
+  1. **未検出曲の劇的削減（1,029曲の救済・同定）**: 3,282曲あった未検出曲のうち、**859曲の歌詞が救済** され、**170曲がGenius属性によりインスト曲として同定** された。未検出曲は一気に **2,253曲** へと大幅圧縮（約31.4%解決）された。
+  2. **誤検知リスクの回避**: 先ほどインスト誤判定が問題となった `David Palmer: Symphonic Music Of Yes` の `Roundabout` や `Close To The Edge` についても、Genius よりボーカル歌詞が正常に救済され、インスト誤爆を完全に回避した。
+  3. **耐障害性と所要時間の完全一致**: Context7 の知見に基づくフェイルファスト設計（3.05秒タイムアウト）により、ダウン中の Lyrics.ovh に足を取られることなく、事前見積もり（120〜150分）の範囲内である **137.7分** で完全無停止完走した。
+  4. **Chapter 0 の完全遵守**: スキャン実行中の iTunes COM 直接書き込みは0件であり、全データ・キャッシュは `X:\LylicData\` 配下に安全に隔離蓄積された。
