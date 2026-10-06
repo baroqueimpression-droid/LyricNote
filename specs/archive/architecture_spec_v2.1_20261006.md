@@ -1,4 +1,4 @@
-# LyricNote 詳細仕様書 (v2.2)
+# LyricNote 詳細仕様書 (v2.1)
 
 ## 改定履歴 (Change Log & Traceability)
 
@@ -7,12 +7,9 @@
 | v1.0 | 2026-10-04 | Assistant | 初版ドラフト | iTunes COM連携、LRCLIB、Geminiプロンプト、Gemma2和訳の基本設計 | [`specs/archive/architecture_spec_initial_draft.md`](archive/architecture_spec_initial_draft.md) |
 | v1.1 | 2026-10-05 01:00 | Assistant | セキュリティ再評価・スキャン仕様適正化 | Gradio Share却下・Tailscale必須化／全曲自動スキャン・邦楽和訳自動スキップ | [`specs/archive/architecture_spec_v1.0_20261005.md`](archive/architecture_spec_v1.0_20261005.md) |
 | v2.0 | 2026-10-05 08:30 | Assistant | 実機不具合（各曲解説脱落・邦楽歌詞取得失敗・Ollama切断）の根本解決 | 解説スキーマ分離、`tracks.liner_notes`永続化、LRCLIB多段階検索、Ollama安定化、7セクション化 | [`specs/archive/architecture_spec_v2.0_20261005.md`](archive/architecture_spec_v2.0_20261005.md) |
-| v2.1 | 2026-10-05 12:40 | Assistant | ①ユーザー手間削減のため解説生成をエージェント全自動化 ②ライブラリ全曲の無停止処理と自律診断 ③基本方針・既存仕様の復元統合 | 第0章（基本方針）の復元・固定／Phase1-2全自動化・Phase3ユーザー承認制／2パス自動実行＋自律診断／ステータス体系統一 | [`specs/archive/architecture_spec_v2.1_20261006.md`](archive/architecture_spec_v2.1_20261006.md) |
-| **v2.2** | 2026-10-06 23:30 | Assistant | 歌詞未検出曲（3,283曲）の再現可能なダブルチェック＆セカンダリ外部ソース連携の仕様化 | 4.8項新設（タイトル分解マッピング対照表・インスト判定リスト・セカンダリ3サイト連携）、DoD-13〜15追加。既存仕様・受入基準は完全維持 | （本ドキュメント） |
+| **v2.1** | 2026-10-05 12:40 | Assistant | ①ユーザー手間削減のため解説生成をエージェント全自動化 ②ライブラリ全曲の無停止処理と自律診断 ③基本方針・既存仕様の復元統合 | 第0章（基本方針）の復元・固定／Phase1-2全自動化・Phase3ユーザー承認制／2パス自動実行＋自律診断／ステータス体系統一 | （本ドキュメント） |
 
 **v2.0からの復元項目**: 目的と目標（原文）、絶対遵守ルール章、API課金ゼロ、SDD・検証エビデンス義務、Gradio Share却下の評価根拠、ライブラリスキャン仕様、翻訳メモリ・用語集注入、辞典化（永続蓄積）、歌詞未取得時の手動入力。
-**v2.2追加項目**: 未検出曲の自律ダブルチェック（タイトル分解マッピング対照表出力、インスト判定リスト出力、Genius / J-Lyric.net / Lyrics.ovh 多段階連携）。
-
 
 ---
 
@@ -149,7 +146,6 @@ CREATE TABLE IF NOT EXISTS batch_runs (
 | `unprocessed` | 未処理 | 不可 |
 | `lyrics_not_found` | 歌詞取得失敗 | 不可 |
 | `translation_failed` | 和訳失敗（洋楽） | 不可 |
-| `instrumental` | インスト確定（歌詞不要・解説のみ反映） | **可**（歌詞ブロック省略） |
 | `ready_to_write` | 歌詞＋（洋楽なら和訳）が揃い、エラー文字列なし | **可** |
 | `completed` | iTunes書き込み済み | 再書き込み可 |
 
@@ -233,82 +229,6 @@ flowchart TD
 - iTunes に既存の歌詞があれば検知して DB に保存する。
 - PID の取得には `itunes.ITObjectPersistentIDHigh/Low(track)`、検索には `ItemByPersistentID` を使う。
 
-### 4.8. 歌詞未検出曲の自律ダブルチェックと外部連携（v2.2 追加）
-
-> 本項は、ライブラリ全曲バッチにおいて歌詞未検出（`lyrics_not_found`）となった楽曲に対し、二重・三重の検証と救済を行うための再現可能な設計である。
-> オーナーが目視確認できるよう、推測による安易な自動代入を行わず、明確な「成果物リスト」を出力することを絶対要件とする。
-
-#### 4.8.1. 手法①：タイトル分解・正規化による再照合（マッピング対照表の生成）
-1. **対象**:
-   `lyrics_not_found` のうち、サブタイトル、組曲名、バージョン表記、フィーチャリング等の複合タイトルを含む楽曲。
-2. **分解・抽出アルゴリズム**:
-   - **サブタイトル分割**: `～`, `~`, ` - `, `:`, `：`, `/`, `／`, ` feat. `, ` with ` で分割し、主タイトルを抽出。
-   - **組曲・クラシック接頭辞の除去**: `組曲...より『...』 ～ (曲名)` のような前置表現を切り離し、純粋な楽曲名を抽出。
-   - **表記正規化**: 全角半角統一、英数スペース揺れ（例: `Express999` ⇔ `Express 999`）、装飾記号（`☆`, `★`, `【】`, `『』`）を除去。
-   - **LRCLIB試験照合**: 分解した主タイトルでLRCLIBを検索し、高信頼度で合致する候補曲を取得。
-3. **成果物（オーナー目視確認用リスト）**:
-   - **出力先**: `X:\LylicData\reports\lyrics_mapping_plan_{RunID}.md`（および `.csv`）
-   - **出力フォーマット**:
-     | トラックID (PID) | ライブラリ登録曲名（原題） | アーティスト | アルバム | 引用先LRCLIBタイトル | LRCLIBアーティスト | 判定根拠 |
-     | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-     | `8E...` | `Brave Love ～Galaxy Express999 (Re-mix)` | `THE ALFEE` | `HIT SINGLE COLLECTION 37` | `Brave Love ~Galaxy Express 999~` | `THE ALFEE` | サブタイトル分割一致 |
-     | `62...` | `ホルスト：組曲...より『木星』 ～星空のディスタンス` | `THE ALFEE` | `THE ALFEE CLASSICS` | `星空のディスタンス` | `THE ALFEE` | 組曲プレフィックス除去 |
-     | `4A...` | `Romeo ～Cosmic ☆ Picnic` | `THE ALFEE` | `GLINT BEAT` | `Romeo` | `THE ALFEE` | 特殊記号除去・前方一致 |
-   - **適用制御**:
-     オーナーが本対照表を確認・納得できるエビデンスとして保持し、合意のもとでDBの歌詞更新および `ready_to_write` 昇格を行う。
-
-#### 4.8.2. 手法②：インストゥルメンタル曲の自動判定（判定リストの生成）
-1. **対象**:
-   `lyrics_not_found` のうち、楽曲構造上「歌詞が存在しないこと」が本来の仕様である楽曲。
-2. **判定アルゴリズム**:
-   - **曲名キーワード判定**:
-     曲名に以下の語句が含まれる場合（大文字小文字不問）：
-     `Instrumental`, `Inst.`, `Overture`, `Concerto`, `Symphony`, `Sonata`, `Allegro`, `Andante`, `Adagio`, `Prelude`, `Interlude`, `Suite`, `組曲`, `協奏曲`, `交響曲`, `序曲`, `間奏曲` 等。
-   - **インスト専門アーティスト特性判定**:
-     - シンフォニック・ロック・インスト専用バンド（例: `The Enid`）
-     - ゲーム音楽インストアレンジ（例: `THE BLACK MAGES`）
-     - オーケストラ・室内管弦楽団・クラシック指揮者（例: `Budapest Strings`, `Berliner Kammerorchester`, `Helmut Winschermann` 等）
-     - 劇伴・サウンドトラック専門作曲家（例: `Christophe Beck` 等）
-3. **成果物（インスト判定済みリスト）**:
-   - **出力先**: `X:\LylicData\reports\instrumental_tracks_{RunID}.md`（および `.csv`）
-   - **出力フォーマット**:
-     | トラックID (PID) | アーティスト名 | アルバム名 | 曲名 | 判定根拠 | 新ステータス |
-     | :--- | :--- | :--- | :--- | :--- | :--- |
-     | `...` | `The Enid` | `In The Region Of The Summer Stars` | `The Fool` | インスト専用バンド特性 | `instrumental` |
-     | `...` | `THE BLACK MAGES` | `THE BLACK MAGES` | `Battle Scene` | ゲーム音楽インストアレンジ | `instrumental` |
-     | `...` | `Ab Koster...` | `100 Must-Have Baroque Masterpieces` | `Horn Concerto No. 1: Allegro` | キーワード: `Concerto`, `Allegro` | `instrumental` |
-4. **DBステータス遷移と書き込み動作**:
-   - `status = 'instrumental'` に更新。
-   - iTunes書き込みフォーマット（4.6項）において、歌詞ブロックを自動省略し、「【楽曲解説】」「【アルバム解説】」のみを端麗に配置する。
-
-#### 4.8.3. 手法③：セカンダリ外部ソース連携仕様（厳選3サイト）
-LRCLIB単体ではカバーできない「洋楽プログレ・アルバム曲（約1,800曲）」および「邦楽旧譜・フォーク（約1,400曲）」を救済するため、性格の異なる3系統の外部ソースと多段階連携する。
-
-```text
-       【歌詞取得多段階パイプライン（v2.2）】
-       ├── 洋楽: [第1] iTunes既存 → [第2] LRCLIB → [第3] Genius API → [第4] Lyrics.ovh
-       └── 邦楽: [第1] iTunes既存 → [第2] LRCLIB → [第3] J-Lyric.net
-```
-
-1. **セカンダリ1: Genius API（洋楽プログレ・オルタナティブ・ロック）**
-   - **対象**: The Flower Kings, Barock Project, Yes, The Tangent 等の洋楽プログレ・アルバム曲。
-   - **仕様**:
-     - `GET https://api.genius.com/search?q={query}`（Client Access Token利用、無料枠）。
-     - 返却された楽曲URLから歌詞本文を抽出（`div[data-lyrics-container="true"]` パース）。
-     - 歌詞本文が `[Instrumental]` と表記されている場合は、自動的に `instrumental` ステータスへ分類。
-     - トークン未設定時は安全にスキップ（フォールバック）する graceful 動作を保証。
-2. **セカンダリ2: J-Lyric.net（邦楽全般・J-POP・昭和歌謡・フォーク）**
-   - **対象**: THE ALFEE（約1,100曲）、所ジョージ、高見沢俊彦、フォーク・クルセダーズ、高橋真梨子 等の国内楽曲。
-   - **仕様**:
-     - `http://j-lyric.net/` の検索クエリを発行し、アーティスト名・曲名の合致ページから本文（`#Lyric`）を取得。
-     - 連続アクセスによる負荷防止のため、リクエスト間隔に最低 1.5 秒の待機ウェイト（Politeness Policy）を義務化。
-3. **セカンダリ3: Lyrics.ovh（パブリック軽量REST API）**
-   - **対象**: 洋楽スタンダード、有名楽曲のフォールバック。
-   - **仕様**:
-     - `GET https://api.lyrics.ovh/v1/{artist}/{title}`
-     - 認証キー不要でプレーンテキストJSONが即返却される。
-     - GeniusやLRCLIBが一時的なエラーやレート制限を起こした際の即時セーフティネットとして機能。
-
 ---
 
 ## 5. 非機能要件・制約事項
@@ -336,9 +256,6 @@ LRCLIB単体ではカバーできない「洋楽プログレ・アルバム曲�
 - [ ] DoD-10（基本方針の遵守）: `X:\LylicData` 以外への書き込みがないこと。楽曲の削除 API の呼び出しがないこと。エージェント・バッチから iTunes への書き込み経路がないこと。いずれもコード検査とテストで確認する。
 - [ ] DoD-11（リグレッション）: 辞典タブ、手動ハイブリッドモード、翻訳メモリ、邦楽スキップ、ライブアルバム判定が引き続き動くこと。
 - [ ] DoD-12（エビデンス）: すべてのテストについて、コマンド・入力・生ログが `TEST_EVIDENCE.md` に虚偽なく記録されていること。
-- [ ] DoD-13（タイトル分解マッピング対照表の生成）: 複合タイトルを持つ未検出曲に対しタイトル分解を実行した際、`X:\LylicData\reports\lyrics_mapping_plan_*.md` が正しく生成され、「原題」「アーティスト」「引用先LRCLIBタイトル」「判定根拠」が正確に出力されること。
-- [ ] DoD-14（インストゥルメンタル判定リストの生成）: インスト判定を実行した際、`X:\LylicData\reports\instrumental_tracks_*.md` が出力され、クラシックやインスト専用バンドの楽曲が `instrumental` として抽出・リスト化されること。
-- [ ] DoD-15（セカンダリ外部ソースの多段階取得）: LRCLIB未登録の洋楽（Genius / Lyrics.ovh）および邦楽（J-Lyric）のテスト対象曲に対し、外部ソースから正常に歌詞が取得され、`lyrics_source` に取得元（`genius`, `jlyric`, `lyrics_ovh`）が記録されること。
 
 ---
 
@@ -353,10 +270,6 @@ LRCLIB単体ではカバーできない「洋楽プログレ・アルバム曲�
 8. `tests/`: DoD-1〜11 のテストスイート。
 9. `TEST_EVIDENCE.md`: 生ログの記録と完了報告。
 10. `USER_GUIDE.md`: エージェント運用手順（指示の仕方、再開方法、Phase 3 の操作）の追記。
-11. `src/title_normalizer.py`（新規）: タイトル分解、候補曲名生成、およびマッピング対照表（Markdown/CSV）出力モジュール。
-12. `src/instrumental_detector.py`（新規）: キーワードおよびアーティスト属性に基づくインスト判定、判定リスト出力モジュール。
-13. `src/secondary_sources.py`（新規）: Genius API、J-Lyric.net、Lyrics.ovh クライアントおよびパーサーモジュール。
-14. `tests/test_double_check.py`（新規）: DoD-13〜15 を網羅する単体・結合テストスイート。
 
 ---
 

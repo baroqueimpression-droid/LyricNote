@@ -36,11 +36,11 @@ class TestBatchRunnerExecution(unittest.TestCase):
         })
 
         runner = BatchRunner()
-        # Pass 2 と Pass 3 をテスト
-        p2_stats = runner._run_pass2()
+        # テスト対象トラックのみを指定して Pass 2 と Pass 3 をテスト
+        p2_stats = runner._run_pass2(target_pids=["BATCH_TEST_02"])
         self.assertIn("retried", p2_stats)
 
-        p3_stats = runner._run_pass3()
+        p3_stats = runner._run_pass3(target_pids=["BATCH_TEST_02"])
         self.assertIn("diagnosed", p3_stats)
 
         # 診断結果が tracks テーブルに刻まれたか確認

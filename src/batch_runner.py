@@ -143,15 +143,26 @@ class BatchRunner:
 
         return stats
 
-    def _run_pass2(self) -> Dict[str, int]:
+    def _run_pass2(self, target_pids: Optional[List[str]] = None) -> Dict[str, int]:
         """Pass 2: 1回失敗したトラックを自動差分リトライ"""
         conn = get_connection()
-        failed_tracks = conn.execute("""
-            SELECT * FROM tracks 
-            WHERE status IN ('lyrics_not_found', 'translation_failed')
-              AND retry_count < 1
-            ORDER BY artist, album, track_number
-        """).fetchall()
+        if target_pids:
+            placeholders = ",".join("?" * len(target_pids))
+            query = f"""
+                SELECT * FROM tracks 
+                WHERE status IN ('lyrics_not_found', 'translation_failed')
+                  AND persistent_id IN ({placeholders})
+                ORDER BY artist, album, track_number
+            """
+            failed_tracks = conn.execute(query, target_pids).fetchall()
+        else:
+            query = """
+                SELECT * FROM tracks 
+                WHERE status IN ('lyrics_not_found', 'translation_failed')
+                  AND retry_count < 1
+                ORDER BY artist, album, track_number
+            """
+            failed_tracks = conn.execute(query).fetchall()
         conn.close()
 
         total = len(failed_tracks)
@@ -207,14 +218,25 @@ class BatchRunner:
 
         return stats
 
-    def _run_pass3(self) -> Dict[str, Any]:
+    def _run_pass3(self, target_pids: Optional[List[str]] = None) -> Dict[str, Any]:
         """Pass 3: 2回連続失敗トラックの自律深層診断"""
         conn = get_connection()
-        persistently_failed = conn.execute("""
-            SELECT * FROM tracks 
-            WHERE status IN ('lyrics_not_found', 'translation_failed')
-            ORDER BY artist, album, track_number
-        """).fetchall()
+        if target_pids:
+            placeholders = ",".join("?" * len(target_pids))
+            query = f"""
+                SELECT * FROM tracks 
+                WHERE status IN ('lyrics_not_found', 'translation_failed')
+                  AND persistent_id IN ({placeholders})
+                ORDER BY artist, album, track_number
+            """
+            persistently_failed = conn.execute(query, target_pids).fetchall()
+        else:
+            query = """
+                SELECT * FROM tracks 
+                WHERE status IN ('lyrics_not_found', 'translation_failed')
+                ORDER BY artist, album, track_number
+            """
+            persistently_failed = conn.execute(query).fetchall()
         conn.close()
 
         total = len(persistently_failed)
