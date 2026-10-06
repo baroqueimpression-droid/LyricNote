@@ -260,7 +260,7 @@ flowchart TD
 #### 4.8.2. 手法②：インストゥルメンタル曲の自動判定（判定リストの生成）
 1. **対象**:
    `lyrics_not_found` のうち、楽曲構造上「歌詞が存在しないこと」が本来の仕様である楽曲。
-2. **判定アルゴリズム**:
+2. **判定アルゴリズム（多層ハイブリッド判定）**:
    - **曲名キーワード判定**:
      曲名に以下の語句が含まれる場合（大文字小文字不問）：
      `Instrumental`, `Inst.`, `Overture`, `Concerto`, `Symphony`, `Sonata`, `Allegro`, `Andante`, `Adagio`, `Prelude`, `Interlude`, `Suite`, `組曲`, `協奏曲`, `交響曲`, `序曲`, `間奏曲` 等。
@@ -269,6 +269,8 @@ flowchart TD
      - ゲーム音楽インストアレンジ（例: `THE BLACK MAGES`）
      - オーケストラ・室内管弦楽団・クラシック指揮者（例: `Budapest Strings`, `Berliner Kammerorchester`, `Helmut Winschermann` 等）
      - 劇伴・サウンドトラック専門作曲家（例: `Christophe Beck` 等）
+   - **外部ソース（Genius）属性判定（タスク13連携）**:
+     タスク13のセカンダリソース（Genius）照合結果において `[Instrumental]` または `This song is an instrumental` が返却された楽曲を自動でインスト判定に統合。
 3. **成果物（インスト判定済みリスト）**:
    - **出力先**: `X:\LylicData\reports\instrumental_tracks_{RunID}.md`（および `.csv`）
    - **出力フォーマット**:
@@ -276,6 +278,7 @@ flowchart TD
      | :--- | :--- | :--- | :--- | :--- | :--- |
      | `...` | `The Enid` | `In The Region Of The Summer Stars` | `The Fool` | インスト専用バンド特性 | `instrumental` |
      | `...` | `THE BLACK MAGES` | `THE BLACK MAGES` | `Battle Scene` | ゲーム音楽インストアレンジ | `instrumental` |
+     | `...` | `The Flower Kings` | `Adam & Eve` | `Babylon` | Genius: This song is an instrumental | `instrumental` |
      | `...` | `Ab Koster...` | `100 Must-Have Baroque Masterpieces` | `Horn Concerto No. 1: Allegro` | キーワード: `Concerto`, `Allegro` | `instrumental` |
 4. **DBステータス遷移と書き込み動作**:
    - `status = 'instrumental'` に更新。
@@ -343,20 +346,30 @@ LRCLIB単体ではカバーできない「洋楽プログレ・アルバム曲�
 ---
 
 ## 7. タスク分解（原則1ファイル1タスク）
+
+### 7.1. 完了済みタスク（v2.0〜v2.1）
 1. `src/db.py`: スキーマ追加とマイグレーション（既存ステータスの移行を含む）、差分抽出、`update_track_liner_notes`。
 2. `src/critic.py`: 解説 JSON の検証関数。
 3. `src/lyrics_fetcher.py`: 正規化＋多段階検索、失敗理由コード。
 4. `src/translator.py`: エラー文字列を保存しないことの徹底、失敗理由コード。
 5. `src/itunes_writer.py`: 統合フォーマッタ、書き込み前の `ready_to_write` 判定。
-6. `src/batch_runner.py`（新規）: Pass 1〜3、チェックポイント、`batch_runs` の記録、レポート出力。
+6. `src/batch_runner.py`: Pass 1〜3、チェックポイント、`batch_runs` の記録、レポート出力。
 7. `src/app.py`: Phase 3 コンソール化（ステータス表示、Ready のみの一括書き込み、手入力）。
 8. `tests/`: DoD-1〜11 のテストスイート。
 9. `TEST_EVIDENCE.md`: 生ログの記録と完了報告。
 10. `USER_GUIDE.md`: エージェント運用手順（指示の仕方、再開方法、Phase 3 の操作）の追記。
-11. `src/title_normalizer.py`（新規）: タイトル分解、候補曲名生成、およびマッピング対照表（Markdown/CSV）出力モジュール。
-12. `src/instrumental_detector.py`（新規）: キーワードおよびアーティスト属性に基づくインスト判定、判定リスト出力モジュール。
-13. `src/secondary_sources.py`（新規）: Genius API、J-Lyric.net、Lyrics.ovh クライアントおよびパーサーモジュール。
-14. `tests/test_double_check.py`（新規）: DoD-13〜15 を網羅する単体・結合テストスイート。
+
+### 7.2. v2.2 追加タスク（依存関係に基づく推奨着手順序: 13 → 12 → 11 → 14）
+> **設計整合性の根拠（ボトムアップ依存関係）**:
+> 1. 最下層の独立データソースである **タスク13（外部プロバイダ層）** を先行実装し、歌詞テキストおよび Genius のインスト判定フラグを取得可能にする。
+> 2. 次に **タスク12（判定層）** にて、キーワード・アーティスト属性に加えタスク13の外部情報を統合し、インスト曲を確実に判定・除外リスト化する。
+> 3. その後 **タスク11（照合・集約層）** にて、インスト曲を除外した「純粋なボーカル曲」に集中してタイトル分解・再照合を行い、ノイズのないマッピング対照表をオーナーに提示する。
+> 4. 最後に **タスク14（検証層）** にて、DoD-13〜15 の単体・結合テストを一括実行し、`TEST_EVIDENCE.md` に完全生ログを記録する。
+
+- **タスク13 [着手順①]**: `src/secondary_sources.py`（新規）: Genius API、J-Lyric.net、Lyrics.ovh クライアントおよびパーサーモジュール。
+- **タスク12 [着手順②]**: `src/instrumental_detector.py`（新規）: キーワード、アーティスト属性、および外部ソース情報を統合したインスト判定・判定リスト出力モジュール。
+- **タスク11 [着手順③]**: `src/title_normalizer.py`（新規）: タイトル分解、候補曲名生成、およびマッピング対照表（Markdown/CSV）出力モジュール。
+- **タスク14 [着手順④]**: `tests/test_double_check.py`（新規）: DoD-13〜15 を網羅する単体・結合テストスイート。
 
 ---
 
@@ -364,3 +377,4 @@ LRCLIB単体ではカバーできない「洋楽プログレ・アルバム曲�
 1. **Pass 3 の自己修復の範囲**: 救済は「承認済み仕様の範囲内の再試行・クエリの組み合わせ」までとし、コード修正が必要な不具合は「診断と修正案の提示」にとどめる（SDD規約遵守）。
 2. **手動ハイブリッドモード・Gemini API**: 代替手段として維持する。
 3. **解説生成の処理量と継続性**: 約500アルバムの解説生成は複数回の会話にまたがるため、進捗をDB管理とし、中断時は「続きを処理して」で未完了分から再開する運用とする。
+4. **v2.2 タスク着手順序（13 → 12 → 11 → 14）**: 外部ソース（13）から得られるインスト情報（Genius）をインスト自動判定（12）に活用し、インスト除外後のボーカル曲に対してタイトル分解（11）を行うボトムアップ順序を採用することで、各モジュールの精度向上と成果物リストのノイズ低減を図る。
